@@ -1,0 +1,4 @@
+// maven 安装第三方包
+```
+mvn install:install-file  -Dfile=/home/zhangsf/IdeaProjects/parent/lib/api-sdk-jar-with-dependencies.jar -DgroupId=com.fdd -DartifactId=fdd -Dversion=1.0 -Dpackaging=jar
+```

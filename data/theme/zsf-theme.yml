@@ -1,0 +1,22 @@
+extends: base
+font:
+  catalog:
+    merge: true
+    STXinwei:
+      normal: STXinwei/stxinwei-normal.ttf
+      italic: STXinwei/stxinwei-italic.ttf
+      bold:   STXinwei/stxinwei-bold.ttf
+      bold_italic: STXinwei/stxinwei-bold_italic.ttf
+    LiberationSans:
+      normal: LiberationSans/LiberationSans-normal.ttf
+      italic: LiberationSans/LiberationSans-italic.ttf
+      bold: LiberationSans/LiberationSans-bold.ttf
+      bold_italic: LiberationSans/LiberationSans-bold_italic.ttf
+    fallbacks:
+      - LiberationSans
+heading:
+  font-family: STXinwei
+base:
+  font-family: STXinwei
+code:
+  font-family: STXinwei

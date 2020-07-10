@@ -1,0 +1,3 @@
+= AsciiDoc
+
+    asciidoctor-pdf -a pdf-style=./data/theme/zsf-theme.yml -a pdf-fontsdir='./data/fonts;GEM_FONTS_DIR'   ./note/xml/XSD.adoc
