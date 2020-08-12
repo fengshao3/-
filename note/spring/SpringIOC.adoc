@@ -54,22 +54,267 @@ image::../../image/spring/BeanFactory_Class.png[]
 === 加载解析元数据
 这里使用的是XmlBeanDefinitionReader,来加载解析xml的元数据。
 
-. 程序入口
+==== 程序入口
 ----
-AbstractBeanDefinitionReader 父类
-    //多个文件地址，遍历调用
-    loadBeanDefinitions(String... locations)
-    //一个文件地址,已经解析的资源为null
-    loadBeanDefinitions(String locations)
-    //一个文件位置，已经解析的资源为actualResources。ResourceLoader 根据路径获取resource
-    loadBeanDefinitions(String location, @Nullable Set<Resource> actualResources)
-    //多个resource，遍历调用。
-    loadBeanDefinitions(Resource... resources)
-XmlBeanDefinitionReader 具体实现类
-    loadBeanDefinitions(Resource resource) 具体实现。
+    AbstractBeanDefinitionReader 父类
+        //多个文件地址，遍历调用
+        loadBeanDefinitions(String... locations)
+        //一个文件地址,已经解析的资源为null
+        loadBeanDefinitions(String locations)
+        //一个文件位置，已经解析的资源为actualResources。ResourceLoader 根据路径获取resource
+        loadBeanDefinitions(String location, @Nullable Set<Resource> actualResources)
+        //多个resource，遍历调用。
+        loadBeanDefinitions(Resource... resources)
+    XmlBeanDefinitionReader 具体实现类
+        loadBeanDefinitions(Resource resource) 具体实现。
 ----
-可以看出无论哪个具体调用入口，最终都会都需要调用 `loadBeanDefinitions(Resource resource)`
+    可以看出无论哪个具体调用入口，最终都会都需要调用 具体实现类的 `loadBeanDefinitions(Resource resource)`方法
+我们以此为入口，查看下调用链和关键代码。
 
-2. XmlBeanDefinitionReader loadBeanDefinitions(Resource resource)分析
+==== 调用流程和关键代码分析
+
+* loadBeanDefinitions -> doLoadBeanDefinitions
+
+.doLoadBeanDefinitions 核心代码
+[source,java]
+----
+//使用dom解析xml文件为Document
+Document doc = doLoadDocument(inputSource, resource);
+//注册bean定义
+int count = registerBeanDefinitions(doc, resource);
+if (logger.isDebugEnabled()) {
+logger.debug("Loaded " + count + " bean definitions from " + resource);
+}
+return count;
+----
+
+** doLoadBeanDefinitions-> registerBeanDefinitions
+
+.registerBeanDefinitions
+[source,java]
+----
+public int registerBeanDefinitions(Document doc, Resource resource) throws BeanDefinitionStoreException {
+    //用反射创建类 DefaultBeanDefinitionDocumentReader
+    BeanDefinitionDocumentReader documentReader = createBeanDefinitionDocumentReader();
+    //获取注册器中的bean定义总数，注册器registry，就是beanFactory
+    int countBefore = getRegistry().getBeanDefinitionCount();
+    //注册本次的xml定义beanDefinition
+    documentReader.registerBeanDefinitions(doc, createReaderContext(resource));
+    //返回本次注册了多少bean定义
+    return getRegistry().getBeanDefinitionCount() - countBefore;
+}
+----
+
+
+*  XmlBeanDefinitionReader.registerBeanDefinitions方法 -> DefaultBeanDefinitionDocumentReader(registerBeanDefinitions ->doRegisterBeanDefinitions)
+
+.doRegisterBeanDefinitions方法
+[source,java]
+----
+protected void doRegisterBeanDefinitions(Element root) {
+        //一些嵌套的beans标签会使这个方法递归，为了正确的传播和维护default-* 属性，追踪当前的（父）代理，可能为空
+        // 用备用目的的父代理引用创建一个新（子）代理，然后最后重置 this.delegate 返回父类引用
+		// 这个行为模拟了代理堆，实际上没有这个必要。
+		BeanDefinitionParserDelegate parent = this.delegate;
+		this.delegate = createDelegate(getReaderContext(), root, parent);
+        //是不是默认的命名空间，即http://www.springframework.org/schema/beans
+		if (this.delegate.isDefaultNamespace(root)) {
+            //是否配置了 profile 属性
+			String profileSpec = root.getAttribute(PROFILE_ATTRIBUTE);
+			if (StringUtils.hasText(profileSpec)) {
+                //获取profile字符串数组
+				String[] specifiedProfiles = StringUtils.tokenizeToStringArray(
+						profileSpec, BeanDefinitionParserDelegate.MULTI_VALUE_ATTRIBUTE_DELIMITERS);
+                //配置是否和当前环境匹配
+				if (!getReaderContext().getEnvironment().acceptsProfiles(specifiedProfiles)) {
+					if (logger.isDebugEnabled()) {
+						logger.debug("Skipped XML bean definition file due to specified profiles [" + profileSpec +
+								"] not matching: " + getReaderContext().getResource());
+					}
+					return;
+				}
+			}
+		}
+        //在我们开始处理bean定义之前，允许通过首先处理任何自定义元素类型来扩展XML，此方法是XML的任何其他自定义预处理的自然扩展点，默认为空实现
+		preProcessXml(root);
+        //解析bean定义
+		parseBeanDefinitions(root, this.delegate);
+         //自定义元素后置扩展点
+		postProcessXml(root);
+		this.delegate = parent;
+	}
+----
+* doRegisterBeanDefinitions -> parseBeanDefinitions
+
+.parseBeanDefinitions
+[source,java]
+----
+/**
+ * 根据命名空间分辨是用默认解析元素，或用自定义解析
+ */
+protected void parseBeanDefinitions(Element root, BeanDefinitionParserDelegate delegate) {
+		if (delegate.isDefaultNamespace(root)) {
+			NodeList nl = root.getChildNodes();
+			for (int i = 0; i < nl.getLength(); i++) {
+				Node node = nl.item(i);
+				if (node instanceof Element) {
+					Element ele = (Element) node;
+					if (delegate.isDefaultNamespace(ele)) {
+						parseDefaultElement(ele, delegate);
+					}
+					else {
+						delegate.parseCustomElement(ele);
+					}
+				}
+			}
+		}
+		else {
+			delegate.parseCustomElement(root);
+		}
+	}
+----
+
+*  parseBeanDefinitions->parseDefaultElement
+
+.parseDefaultElement
+[source,java]
+----
+/**
+ * 根据不同的元素做不同事情，import，alias，bean，beans
+ */
+private void parseDefaultElement(Element ele, BeanDefinitionParserDelegate delegate) {
+		if (delegate.nodeNameEquals(ele, IMPORT_ELEMENT)) {
+			//导入import资源
+            importBeanDefinitionResource(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, ALIAS_ELEMENT)) {
+			//添加别名
+            processAliasRegistration(ele);
+		}
+		else if (delegate.nodeNameEquals(ele, BEAN_ELEMENT)) {
+            //添加bean定义
+			processBeanDefinition(ele, delegate);
+		}
+		else if (delegate.nodeNameEquals(ele, NESTED_BEANS_ELEMENT)) {
+			// 递归
+			doRegisterBeanDefinitions(ele);
+		}
+	}
+----
+*  parseDefaultElement->processBeanDefinition
+
+.processBeanDefinition
+[source,java]
+----
+protected void processBeanDefinition(Element ele, BeanDefinitionParserDelegate delegate) {
+    //解析bean element 转化为BeanDefinition
+    BeanDefinitionHolder bdHolder = delegate.parseBeanDefinitionElement(ele);
+    if (bdHolder != null) {
+        //根据命名空间判断是否需要装饰bean定义
+        bdHolder = delegate.decorateBeanDefinitionIfRequired(ele, bdHolder);
+        try {
+            // 注册最后的bean。
+            BeanDefinitionReaderUtils.registerBeanDefinition(bdHolder, getReaderContext().getRegistry());
+        }
+        catch (BeanDefinitionStoreException ex) {
+            getReaderContext().error("Failed to register bean definition with name '" +
+            bdHolder.getBeanName() + "'", ele, ex);
+        }
+        // Send registration event.
+        getReaderContext().fireComponentRegistered(new BeanComponentDefinition(bdHolder));
+    }
+}
+----
+* processBeanDefinition -> BeanDefinitionReaderUtils.registerBeanDefinition
+
+.registerBeanDefinition
+[source,java]
+----
+public static void registerBeanDefinition(
+			BeanDefinitionHolder definitionHolder, BeanDefinitionRegistry registry)
+			throws BeanDefinitionStoreException {
+
+		// 注册bean定义 registry就是beanFactory
+		String beanName = definitionHolder.getBeanName();
+		registry.registerBeanDefinition(beanName, definitionHolder.getBeanDefinition());
+
+		// 注册bean的别名
+		String[] aliases = definitionHolder.getAliases();
+		if (aliases != null) {
+			for (String alias : aliases) {
+				registry.registerAlias(beanName, alias);
+			}
+		}
+	}
+----
+
+* BeanDefinitionReaderUtils.registerBeanDefinition -> DefaultListableBeanFactory.registerBeanDefinition
+
+[source,java]
+----
+//到了最后一步，回到了DefaultListableBeanFactory，最终的bean定义都通过 beanDefinitionMap 收集。
+public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition)
+			throws BeanDefinitionStoreException {
+        //添加断言，beanName和beanDefinition不能为空，否则不能注册
+		Assert.hasText(beanName, "Bean name must not be empty");
+		Assert.notNull(beanDefinition, "BeanDefinition must not be null");
+
+        //如果是 AbstractBeanDefinition实现，则添加验证
+		if (beanDefinition instanceof AbstractBeanDefinition) {
+			try {
+				((AbstractBeanDefinition) beanDefinition).validate();
+			}
+			catch (BeanDefinitionValidationException ex) {
+				throw new BeanDefinitionStoreException(beanDefinition.getResourceDescription(), beanName,
+						"Validation of bean definition failed", ex);
+			}
+		}
+        //判断是否已经注册
+		BeanDefinition existingDefinition = this.beanDefinitionMap.get(beanName);
+		if (existingDefinition != null) {
+			//判断是否允许覆盖
+            if (!isAllowBeanDefinitionOverriding()) {
+				throw new BeanDefinitionOverrideException(beanName, beanDefinition, existingDefinition);
+			}
+            //...删去了些错误抛出的代码
+
+            //我们的beanDefinitionMap put重置覆盖
+			this.beanDefinitionMap.put(beanName, beanDefinition);
+		}
+		else {
+			if (hasBeanCreationStarted()) {
+				// Cannot modify startup-time collection elements anymore (for stable iteration)
+				synchronized (this.beanDefinitionMap) {
+					this.beanDefinitionMap.put(beanName, beanDefinition);
+					List<String> updatedDefinitions = new ArrayList<>(this.beanDefinitionNames.size() + 1);
+					updatedDefinitions.addAll(this.beanDefinitionNames);
+					updatedDefinitions.add(beanName);
+					this.beanDefinitionNames = updatedDefinitions;
+					removeManualSingletonName(beanName);
+				}
+			}
+			else {
+				// 启动注册阶段
+				this.beanDefinitionMap.put(beanName, beanDefinition);
+				this.beanDefinitionNames.add(beanName);
+				removeManualSingletonName(beanName);
+			}
+			this.frozenBeanDefinitionNames = null;
+		}
+
+		if (existingDefinition != null || containsSingleton(beanName)) {
+			resetBeanDefinition(beanName);
+		}
+		else if (isConfigurationFrozen()) {
+			clearByTypeCache();
+		}
+	}
+----
 
 === 实例化bean
+
+    bean 定义注册后，我们需要得到相应的bean的实例话，需要使用 getBean 方法。接下来我们分析getBean的流程
+
+==== 关键类和代码分析
+
+* getBean -> doGetBean
